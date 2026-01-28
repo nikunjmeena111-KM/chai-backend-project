@@ -35,7 +35,7 @@ const userSchema = new Schema(
     
     },
     watchHistory:[{
-        type:Schema.Type.ObjectId,
+        type:Schema.Types.ObjectId,
         ref:"Video",
        
     }],
@@ -45,14 +45,14 @@ const userSchema = new Schema(
     },
     refreshToken:{
         type:String,
-        required:true,
+        default:null,
     },
 
 },{timestamps:true})
 
 userSchema.pre("Save", async function(next){
     if(!this.isModified("password")) return next();
-    this.password = bcrypt.hash(this.password,10)
+    this.password = await bcrypt.hash(this.password,10)
     next()
 })
 

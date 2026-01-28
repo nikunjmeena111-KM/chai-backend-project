@@ -9,9 +9,18 @@ app.use(cors({
     credentials:true
 }))
 
-app.use(express({limit:"16kb"}))
-app.use(express.urlencoded()) 
+app.use(express.json({limit:"16kb"}))
+app.use(express.urlencoded({extended:true})) 
 app.use(express.static("public"))
-
 app.use(cookieParser())
+
+
+// Router import 
+import userRouter from "./routes/user.routes.js"
+
+
+// route declaration
+app.use("/api/v1/users" , userRouter) // this router make an URL " http://localhost:7000/api/v1/users/register"
+
+
 export{ app }
