@@ -3,11 +3,29 @@ import {ApiError} from "../utils/APIError.js"
 import {User} from "../models/user.model.js"
 import { uploadOncloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import jwt from "jsonwebtoken";
 
 
+// method to generate the tokens
+const generateAccessAndRefreshTokens= async (userId)=>{
+    try {
+        const user = await User.findById(userId)
+        const accessToken = user.generateAccessToken()
+        const refreshToken = user.generateRefreshToken()
+
+        user.refreshToken = refreshToken
+        await user.save({validateBeforeSave : false})
+
+        return { accessToken , refreshToken }
+
+    } catch (error) {
+       throw new ApiError(500,"something went wrong while generating access and refresh tokens")   
+    }
+}
+
+
+// controller to register user
 const registerUser= asyncHandler(async (req , res)=>{
-    
-
 // the above line of code are just to test the method ,now we see real things about how to register user 
  
 // first we take user details from frontend 
@@ -20,11 +38,11 @@ const registerUser= asyncHandler(async (req , res)=>{
  // check for user creation
  // return response 
 
-const { fullName , username , email , Password}= req.body
-console.log("email :",email);
+const { fullName , username , email , password}= req.body
+console.log( req.body)// to check what we get from body ;
 
 // now using "if" statement we validate ki sab detail is hai ya nahi 
-if([ fullName,username,email,Password].some((field)=>field?.trim()==="")){
+if([ fullName,username,email,password].some((field)=>field?.trim()==="")){
     throw new ApiError(400 , "all fields are required")
 } // this is adance way of using if statement with some() method , but we can use traditional way of 'if' by applying it one by one on all details
 
@@ -39,6 +57,8 @@ if(existedUser){
 // now we check coverImage and avatar
 const avatarLocalPath= req.files?.avatar?.[0]?.path;
 const coverImageLocalPath= req.files?.coverImage?.[0]?.path;
+console.log(req.files)// to see what this thing ".files" return to us ;
+
 if(!avatarLocalPath){
     throw new ApiError(408,"avatar image is required")
 }
@@ -59,7 +79,7 @@ const user= await User.create({
     avatar:avatar.url,
     coverImage:coverImage?.url||"",
     email,
-    Password,
+    password,
     username:username.toLowerCase(),
 })
 const checkUserCreation = await User.findById(user._id).select(
@@ -80,5 +100,146 @@ return res.status(201).json(
 
 
 
+// controller to login user
+const loginUser = asyncHandler( async (req,res)=>{
+// steps to make controller to login user
 
-export {registerUser}
+// take user detail using req.body
+// username or email check karna ki dala ya nahi
+// find user
+// agr user hai to password lo or use check karo sahi dala hai ya nahi
+// ab agr password sahi hai to user ko refresh token and access token bhejunga
+// send secure cookies 
+
+
+// taking user details
+const {username, email, password}= req.body
+// ckecking details dalails dali nahi
+if(!(username|| email)){
+    throw new ApiError(400 ,"enter the required details")
+}
+ 
+// finding user
+const user = await User.findOne({
+    $or: [{username},{email}]
+})
+if(!user){
+    throw new ApiError(404,"user not found")
+}
+
+// checking password is correct or not 
+const isPasswordValid = await user.isPasswordCorrect(password)
+if(!isPasswordValid){
+    throw new ApiError(401,"incorrect password")
+}
+
+// ab user ko refresh token and access token dena hai
+const {accessToken,refreshToken} = await generateAccessAndRefreshTokens(user._id)
+
+const loggedUser = await User.findById(user._id).select("-password -refreshToken")
+
+// now , send this tokens in cookies
+
+const options ={
+    httpOnly: true,
+    secure:true
+}
+
+res
+.status(201)
+.cookie("accessToken",accessToken,options)
+.cookie("refreshToken",refreshToken,options)// we can use line break in this 
+.json(
+    new ApiResponse(200,
+    {
+       user : loggedUser , accessToken , refreshToken 
+    },
+    " user logged in succsfully "
+     )
+  )
+
+})
+
+
+
+
+//  controller to logout user
+const logoutUser = asyncHandler( async (req,res)=>{
+// steps to write controller to logout user
+
+// first we delete cookies
+// then we reset the refresh token
+
+    await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set:{
+                refreshToken : undefined,
+            }
+        },
+        {
+        new:true,
+        }
+        
+)
+  const options ={
+    httpOnly: true,
+    secure:true
+}
+
+res
+.status(200)
+.clearCookie("accessToken", options)
+.clearCookie("refreshToken",options)
+.json(new ApiResponse(200,{},"user logged out successfully"))
+})
+
+
+const refreshAccessToken = asyncHandler(async (req,res)=>{
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
+
+    if(!incomingRefreshToken){
+        throw new ApiError(401 ,"unauthorized request")
+    }
+
+    try {
+        const decodedIncomingRefreshToken = jwt.verify(incomingRefreshToken,process.env.REFRESH_TOKEN_SECRET)
+    
+        const user = User.findById(decodedIncomingRefreshToken?._id)
+        if(!user){
+            throw new ApiError(401,"invallid refresh Token")
+        }
+    
+        if (incomingRefreshToken !== user?.refreshToken){
+            throw new ApiError(401,"refreshToken is expired or used")
+        }
+    
+        const options = {
+            httpOnly:true,
+            secure:true,
+        }
+    
+       const {accessToken,newRefreshToken} =  await generateAccessAndRefreshTokens(user._id)
+    
+        res
+        .status(200)
+        .cookie("accessToken",accessToken , options)
+        .cookie("refreshToken",newRefreshToken,options)
+        .json(
+            new ApiResponse(201,
+                {accessToken,refreshToken: newRefreshToken},
+                "Access Token refreshed"
+            )
+        )
+    } catch (error) {
+        throw new ApiError(400,"something went wrong in refreshing the access token")
+    }
+})
+
+
+export {
+    registerUser,
+    loginUser,
+    logoutUser,
+    refreshAccessToken,
+}
